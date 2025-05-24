@@ -1,0 +1,105 @@
+---
+# ConfigMap for scheduled playbooks
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ansible-scheduled-tasks
+data:
+  maintenance.yml: |
+    ---
+    - name: Daily maintenance tasks
+      hosts: all
+      become: yes
+      tasks:
+        - name: Clean package cache
+          apt:
+            autoclean: yes
+          when: ansible_os_family == "Debian"
+        
+        - name: Update system packages
+          package:
+            name: "*"
+            state: latest
+          
+        - name: Clean up old log files
+          find:
+            paths: /var/log
+            age: 30d
+            recurse: yes
+          register: old_logs
+        
+        - name: Remove old logs
+          file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_logs.files }}"
+        
+        - name: Check disk usage
+          shell: df -h
+          register: disk_usage
+        
+        - name: Send disk usage report
+          debug:
+            msg: "{{ disk_usage.stdout_lines }}"
+
+  inventory.ini: |
+    [production]
+    prod-web-1 ansible_host=10.0.1.10
+    prod-web-2 ansible_host=10.0.1.11
+    prod-db-1 ansible_host=10.0.1.20
+    
+    [staging]
+    stage-web-1 ansible_host=10.0.2.10
+    stage-db-1 ansible_host=10.0.2.20
+
+---
+# CronJob for daily maintenance
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ansible-maintenance
+spec:
+  schedule: "0 2 * * *"  # Run at 2 AM daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: ansible
+            image: ansible/ansible:latest
+            command: ["ansible-playbook"]
+            args: 
+            - "/playbooks/maintenance.yml"
+            - "-i"
+            - "/inventory/inventory.ini"
+            - "--limit"
+            - "production"
+            - "-v"
+            volumeMounts:
+            - name: playbooks
+              mountPath: /playbooks
+            - name: inventory
+              mountPath: /inventory
+            - name: ssh-keys
+              mountPath: /root/.ssh
+              readOnly: true
+            env:
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+          volumes:
+          - name: playbooks
+            configMap:
+              name: ansible-scheduled-tasks
+          - name: inventory
+            configMap:
+              name: ansible-scheduled-tasks
+              items:
+              - key: inventory.ini
+                path: inventory.ini
+          - name: ssh-keys
+            secret:
+              secretName: ansible-ssh-key
+              defaultMode: 0600
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1

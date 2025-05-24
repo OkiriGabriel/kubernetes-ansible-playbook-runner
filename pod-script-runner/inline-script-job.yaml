@@ -1,0 +1,90 @@
+---
+# Job with inline script
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inline-script-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: script-runner
+        image: ubuntu:20.04
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            echo "Starting inline script execution..."
+            
+            # Update package list
+            apt-get update -y
+            
+            # Install required packages
+            apt-get install -y curl wget jq
+            
+            # Create directory structure
+            mkdir -p /app/{config,data,logs}
+            
+            # Download configuration
+            echo "Downloading configuration..."
+            cat > /app/config/app.json << 'EOF'
+            {
+              "app_name": "MyApplication",
+              "version": "1.0.0",
+              "environment": "production",
+              "deployed_at": "$(date -Iseconds)"
+            }
+            EOF
+            
+            # Process configuration
+            echo "Processing configuration..."
+            jq '.deployed_at = now | strftime("%Y-%m-%dT%H:%M:%SZ")' /app/config/app.json > /tmp/processed.json
+            mv /tmp/processed.json /app/config/app.json
+            
+            # Create startup script
+            cat > /app/start.sh << 'EOF'
+            #!/bin/bash
+            echo "Application starting..."
+            echo "Config: $(cat /app/config/app.json)"
+            echo "Application ready!"
+            EOF
+            chmod +x /app/start.sh
+            
+            # Test the application
+            echo "Testing application..."
+            /app/start.sh
+            
+            # Create summary report
+            echo "Creating deployment report..."
+            cat > /app/logs/deployment-report.txt << EOF
+            Deployment Summary
+            ==================
+            Date: $(date)
+            Pod: $HOSTNAME
+            Namespace: $NAMESPACE
+            Status: SUCCESS
+            
+            Files created:
+            $(find /app -type f)
+            
+            Configuration:
+            $(cat /app/config/app.json)
+            EOF
+            
+            echo "Script execution completed successfully!"
+            echo "Report:"
+            cat /app/logs/deployment-report.txt
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      restartPolicy: Never
+  backoffLimit: 2

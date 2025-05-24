@@ -1,0 +1,117 @@
+---
+# ConfigMap containing your scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-scripts
+data:
+  # Bash script
+  setup.sh: |
+    #!/bin/bash
+    echo "Starting setup script..."
+    
+    # Install required packages
+    apt-get update
+    apt-get install -y curl wget vim
+    
+    # Create directories
+    mkdir -p /opt/myapp/{config,logs,data}
+    
+    # Download files
+    curl -o /opt/myapp/config/app.conf https://example.com/config
+    
+    # Set permissions
+    chmod -R 755 /opt/myapp
+    
+    echo "Setup completed successfully!"
+  
+  # Python script
+  deploy.py: |
+    #!/usr/bin/env python3
+    import os
+    import json
+    import subprocess
+    from datetime import datetime
+    
+    def main():
+        print("Starting Python deployment script...")
+        
+        # Create deployment info
+        deploy_info = {
+            "timestamp": datetime.now().isoformat(),
+            "pod_name": os.environ.get("HOSTNAME", "unknown"),
+            "namespace": os.environ.get("NAMESPACE", "default")
+        }
+        
+        # Write deployment info
+        with open("/tmp/deploy-info.json", "w") as f:
+            json.dump(deploy_info, f, indent=2)
+        
+        # Run some commands
+        result = subprocess.run(["ls", "-la", "/tmp"], 
+                              capture_output=True, text=True)
+        print("Directory listing:")
+        print(result.stdout)
+        
+        print("Python script completed!")
+    
+    if __name__ == "__main__":
+        main()
+
+  # Ansible playbook
+  configure.yml: |
+    ---
+    - name: Configure system
+      hosts: localhost
+      connection: local
+      tasks:
+        - name: Run bash script
+          script: /scripts/setup.sh
+        
+        - name: Run python script
+          command: python3 /scripts/deploy.py
+        
+        - name: Check results
+          stat:
+            path: /tmp/deploy-info.json
+          register: deploy_file
+        
+        - name: Show deployment status
+          debug:
+            msg: "Deployment file exists: {{ deploy_file.stat.exists }}"
+
+---
+# Job to run scripts
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: script-runner-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: script-runner
+        image: ansible/ansible:latest  # Has Python, Bash, and Ansible
+        command: ["/bin/bash"]
+        args:
+          - -c
+          - |
+            echo "Making scripts executable..."
+            chmod +x /scripts/*.sh /scripts/*.py
+            
+            echo "Running Ansible playbook..."
+            ansible-playbook /scripts/configure.yml -v
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+      volumes:
+      - name: scripts
+        configMap:
+          name: my-scripts
+          defaultMode: 0755  # Make scripts executable
+      restartPolicy: Never

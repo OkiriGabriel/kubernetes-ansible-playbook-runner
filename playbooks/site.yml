@@ -1,0 +1,19 @@
+---
+- name: Sample playbook
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Print hello message
+      debug:
+        msg: "Hello from Ansible in Kubernetes!"
+    
+    - name: Create a test file
+      file:
+        path: /tmp/ansible-test.txt
+        state: touch
+        
+    - name: Write content to file
+      copy:
+        content: "Ansible executed successfully at {{ ansible_date_time.iso8601 }}"
+        dest: /tmp/ansible-test.txt 
