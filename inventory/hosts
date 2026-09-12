@@ -1,2 +1,9 @@
 [local]
-localhost ansible_connection=local 
+localhost ansible_connection=local ansible_python_interpreter=auto_silent
+
+[webservers]
+# server1 ansible_host=192.168.1.10 ansible_user=ubuntu
+# server2 ansible_host=192.168.1.11 ansible_user=ubuntu
+
+[databases]
+# db1 ansible_host=192.168.1.20 ansible_user=ubuntu

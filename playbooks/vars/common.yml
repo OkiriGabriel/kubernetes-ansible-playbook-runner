@@ -1,0 +1,4 @@
+---
+app_name: kubernetes-ansible-playbook-runner
+test_file: /tmp/ansible-test.txt
+report_file: /tmp/ansible-report.txt

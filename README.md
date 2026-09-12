@@ -1,68 +1,180 @@
-# git init
+# Kubernetes Ansible Playbook Runner
 
-This project demonstrates how to run Ansible playbooks within Kubernetes using a Job. It provides a way to execute Ansible automation tasks in a containerized environment.
+Run Ansible playbooks inside Kubernetes. The repo is organized as a playbook: load the Ansible content once, then apply the runner pattern you need.
 
-## Project Structure
-
-```
-.
-├── README.md
-├── ansible-playbook.yaml      # Main Kubernetes manifest
-├── playbooks/
-│   └── site.yml              # Ansible playbook
-└── inventory/
-    └── hosts                 # Ansible inventory file
-```
-
-## Components
-
-1. **Kubernetes ConfigMaps**:
-   - `ansible-playbooks`: Contains the Ansible playbook content
-   - `ansible-inventory`: Contains the Ansible inventory configuration
-
-2. **Kubernetes Job**:
-   - Uses `alpine/ansible` image
-   - Mounts ConfigMaps as volumes
-   - Executes the Ansible playbook
+The included playbooks target `localhost` so every pattern works in a cluster without SSH keys or extra hosts. Point the inventory at real machines when you are ready to manage them.
 
 ## Prerequisites
 
-- Kubernetes cluster
-- kubectl configured to communicate with your cluster
+- A Kubernetes cluster
+- `kubectl` configured for that cluster
+- Optional: Ansible on your laptop if you want to dry-run playbooks locally
 
-## Usage
+## Layout
 
-1. Apply the Kubernetes manifest:
-   ```bash
-   kubectl apply -f ansible-playbook.yaml
-   ```
+```
+.
+├── ansible.cfg
+├── inventory/hosts
+├── playbooks/
+│   ├── site.yml              # smoke test
+│   ├── bootstrap.yml         # writes files for an init container
+│   ├── maintenance.yml       # scheduled health report
+│   └── vars/common.yml
+├── playbook-job/             # one-shot Job
+├── playbook-cronjob/         # daily CronJob
+├── playbook-deployment/      # long-running runner you can exec into
+├── playbook-init/            # init container bootstrap
+└── pod-script-runner/        # ConfigMap scripts plus an inline Job
+```
 
-2. Check the job status:
-   ```bash
-   kubectl get jobs
-   ```
+## 1. Load the playbooks into the cluster
 
-3. View the job logs:
-   ```bash
-   kubectl logs job/ansible-job
-   ```
+ConfigMaps are the source of truth the runners mount. Re-run these commands after you edit files in `playbooks/` or `inventory/`.
 
-## Ansible Playbook Details
+```bash
+kubectl create configmap ansible-playbooks \
+  --from-file=site.yml=playbooks/site.yml \
+  --from-file=bootstrap.yml=playbooks/bootstrap.yml \
+  --from-file=maintenance.yml=playbooks/maintenance.yml \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-The included playbook performs the following tasks:
-- Prints a hello message
-- Creates a test file at `/tmp/ansible-test.txt`
-- Writes execution timestamp to the file
+kubectl create configmap ansible-playbook-vars \
+  --from-file=playbooks/vars \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-## Notes
+kubectl create configmap ansible-inventory \
+  --from-file=hosts=inventory/hosts \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-- The playbook runs with `connection: local` and `gather_facts: false`
-- Host key checking is disabled for simplicity
-- The job has a backoff limit of 3 retries
+kubectl create configmap ansible-config \
+  --from-file=ansible.cfg \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Confirm they exist:
+
+```bash
+kubectl get configmap ansible-playbooks ansible-playbook-vars ansible-inventory ansible-config
+```
+
+## 2. Pick a runner pattern
+
+### Pattern A — one-shot Job
+
+Use this for a playbook that should run once and exit.
+
+```bash
+kubectl apply -f playbook-job/ansible-job.yaml
+kubectl get jobs
+kubectl logs job/ansible-job
+```
+
+`playbooks/site.yml` prints the runner identity, writes `/tmp/ansible-test.txt`, and asserts the file exists.
+
+### Pattern B — scheduled CronJob
+
+Use this for recurring work. The example runs `playbooks/maintenance.yml` at 02:00 every day and writes `/tmp/maintenance-report.txt`.
+
+```bash
+kubectl apply -f playbook-cronjob/ansible-cronjob.yaml
+kubectl get cronjobs
+```
+
+Trigger a run immediately without waiting for the schedule:
+
+```bash
+kubectl create job ansible-maintenance-now --from=cronjob/ansible-maintenance
+kubectl logs job/ansible-maintenance-now
+```
+
+### Pattern C — long-running Deployment
+
+Use this when you want a pod you can exec into and run playbooks by hand.
+
+```bash
+kubectl apply -f playbook-deployment/ansible-deployment.yaml
+kubectl get pods -l pattern=long-running-runner
+```
+
+Run a playbook inside the runner:
+
+```bash
+kubectl exec -it deploy/ansible-runner -- \
+  ansible-playbook site.yml -i /inventory/hosts -v
+```
+
+### Pattern D — init container
+
+Use this when an application pod should not start until Ansible has prepared shared files.
+
+```bash
+kubectl apply -f playbook-init/ansible-init.yaml
+kubectl logs ansible-init-demo -c ansible-bootstrap
+kubectl logs ansible-init-demo -c app
+```
+
+The init container runs `playbooks/bootstrap.yml`, writes `/shared/app.conf` and `/shared/ready`, then the `app` container reads those files from `/app/data`.
+
+### Pattern E — script runner
+
+Use this when the job should run shell or Python helpers and then an Ansible playbook.
+
+```bash
+kubectl apply -f pod-script-runner/scripts-configmap.yaml
+kubectl apply -f pod-script-runner/script-job.yaml
+kubectl logs job/script-runner-job
+```
+
+For a Job with no ConfigMap and an inline shell script:
+
+```bash
+kubectl apply -f pod-script-runner/inline-script-job.yaml
+kubectl logs job/inline-script-job
+```
+
+## 3. Target remote hosts later
+
+The sample inventory only enables `localhost`. To manage other machines:
+
+1. Uncomment and edit hosts in `inventory/hosts`.
+2. Reload the `ansible-inventory` ConfigMap from step 1.
+3. Store an SSH key as a Secret (do not commit the key):
+
+```bash
+kubectl create secret generic ansible-ssh-key \
+  --from-file=id_rsa="$HOME/.ssh/id_rsa"
+```
+
+4. Mount that Secret at `/root/.ssh` on the runner and set `ansible_user` on each host.
 
 ## Cleanup
 
-To remove the resources:
+Remove a single pattern:
+
 ```bash
-kubectl delete -f ansible-playbook.yaml
-``` 
+kubectl delete -f playbook-job/ansible-job.yaml
+kubectl delete -f playbook-cronjob/ansible-cronjob.yaml
+kubectl delete -f playbook-deployment/ansible-deployment.yaml
+kubectl delete pod ansible-init-demo
+kubectl delete -f pod-script-runner/script-job.yaml
+kubectl delete -f pod-script-runner/inline-script-job.yaml
+kubectl delete -f pod-script-runner/scripts-configmap.yaml
+```
+
+Remove the shared ConfigMaps:
+
+```bash
+kubectl delete configmap \
+  ansible-playbooks \
+  ansible-playbook-vars \
+  ansible-inventory \
+  ansible-config
+```
+
+## Notes
+
+- Runners use the `alpine/ansible` image.
+- Playbooks gather facts so timestamps and hostnames are real.
+- Host key checking is disabled in `ansible.cfg` for the demo. Turn it back on for anything that is not a local smoke test.
+- Jobs keep logs for 10 minutes (`ttlSecondsAfterFinished: 600`), then Kubernetes deletes them.

@@ -1,0 +1,51 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: script-runner-job
+  labels:
+    app: ansible-runner
+    pattern: script-runner
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: ansible-runner
+        pattern: script-runner
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: script-runner
+          image: alpine/ansible:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "Making scripts executable"
+              chmod +x /scripts/*.sh /scripts/*.py
+              echo "Running configure playbook"
+              ansible-playbook /scripts/configure.yml -v
+          env:
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: ansible-scripts
+            defaultMode: 0755

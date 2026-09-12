@@ -1,0 +1,35 @@
+---
+- name: Daily maintenance on localhost
+  hosts: local
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Collect disk usage
+      ansible.builtin.command: df -h
+      register: disk_usage
+      changed_when: false
+
+    - name: Collect memory usage
+      ansible.builtin.command: free -h
+      register: memory_usage
+      changed_when: false
+      failed_when: false
+
+    - name: Show disk usage
+      ansible.builtin.debug:
+        msg: "{{ disk_usage.stdout_lines }}"
+
+    - name: Write a maintenance report
+      ansible.builtin.copy:
+        dest: /tmp/maintenance-report.txt
+        content: |
+          Maintenance report
+          ==================
+          Host: {{ ansible_hostname }}
+          Date: {{ ansible_date_time.iso8601 }}
+
+          Disk usage
+          ----------
+          {{ disk_usage.stdout }}
+        mode: "0644"

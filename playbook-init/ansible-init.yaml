@@ -1,0 +1,62 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ansible-init-demo
+  labels:
+    app: ansible-runner
+    pattern: init-container
+spec:
+  restartPolicy: Never
+  initContainers:
+    - name: ansible-bootstrap
+      image: alpine/ansible:latest
+      workingDir: /playbooks
+      command: ["ansible-playbook"]
+      args:
+        - bootstrap.yml
+        - -i
+        - /inventory/hosts
+        - -v
+      env:
+        - name: ANSIBLE_CONFIG
+          value: /etc/ansible/ansible.cfg
+        - name: ANSIBLE_HOST_KEY_CHECKING
+          value: "False"
+      volumeMounts:
+        - name: shared-data
+          mountPath: /shared
+        - name: playbooks
+          mountPath: /playbooks
+        - name: inventory
+          mountPath: /inventory
+        - name: ansible-config
+          mountPath: /etc/ansible/ansible.cfg
+          subPath: ansible.cfg
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "Application starting"
+          echo "Waiting for Ansible bootstrap marker"
+          test -f /app/data/ready || exit 1
+          echo "Bootstrap config:"
+          cat /app/data/app.conf
+          echo "Init playbook completed; container will exit"
+      volumeMounts:
+        - name: shared-data
+          mountPath: /app/data
+  volumes:
+    - name: shared-data
+      emptyDir: {}
+    - name: playbooks
+      configMap:
+        name: ansible-playbooks
+    - name: inventory
+      configMap:
+        name: ansible-inventory
+    - name: ansible-config
+      configMap:
+        name: ansible-config

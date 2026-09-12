@@ -1,19 +1,35 @@
 ---
-- name: Sample playbook
-  hosts: localhost
+- name: Smoke-test Ansible inside Kubernetes
+  hosts: local
   connection: local
-  gather_facts: false
+  gather_facts: true
+  vars_files:
+    - vars/common.yml
+
   tasks:
-    - name: Print hello message
-      debug:
-        msg: "Hello from Ansible in Kubernetes!"
-    
-    - name: Create a test file
-      file:
-        path: /tmp/ansible-test.txt
-        state: touch
-        
-    - name: Write content to file
-      copy:
-        content: "Ansible executed successfully at {{ ansible_date_time.iso8601 }}"
-        dest: /tmp/ansible-test.txt 
+    - name: Show runner identity
+      ansible.builtin.debug:
+        msg: >-
+          {{ app_name }} ran on {{ ansible_hostname }}
+          at {{ ansible_date_time.iso8601 }}
+
+    - name: Create a marker file
+      ansible.builtin.copy:
+        dest: "{{ test_file }}"
+        content: |
+          playbook: site.yml
+          host: {{ ansible_hostname }}
+          finished_at: {{ ansible_date_time.iso8601 }}
+        mode: "0644"
+
+    - name: Confirm the marker file exists
+      ansible.builtin.stat:
+        path: "{{ test_file }}"
+      register: marker
+
+    - name: Fail if the marker file was not written
+      ansible.builtin.assert:
+        that:
+          - marker.stat.exists
+        fail_msg: "Expected {{ test_file }} to exist after the playbook run"
+        success_msg: "Playbook completed successfully"

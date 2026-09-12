@@ -1,0 +1,55 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ansible-scripts
+  labels:
+    app: ansible-runner
+    pattern: script-runner
+data:
+  setup.sh: |
+    #!/bin/sh
+    set -eu
+    echo "Starting setup script"
+    mkdir -p /opt/myapp/config /opt/myapp/logs /opt/myapp/data
+    printf 'status=ready\n' > /opt/myapp/config/app.conf
+    echo "Setup completed"
+
+  deploy.py: |
+    #!/usr/bin/env python3
+    import json
+    import os
+    from datetime import datetime, timezone
+
+    deploy_info = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "pod_name": os.environ.get("HOSTNAME", "unknown"),
+        "namespace": os.environ.get("NAMESPACE", "default"),
+    }
+
+    with open("/tmp/deploy-info.json", "w", encoding="utf-8") as handle:
+        json.dump(deploy_info, handle, indent=2)
+
+    print("Wrote /tmp/deploy-info.json")
+
+  configure.yml: |
+    ---
+    - name: Run helper scripts from a ConfigMap
+      hosts: localhost
+      connection: local
+      gather_facts: false
+      tasks:
+        - name: Run the setup script
+          ansible.builtin.command: /scripts/setup.sh
+
+        - name: Run the Python deploy script
+          ansible.builtin.command: python3 /scripts/deploy.py
+
+        - name: Confirm the deploy marker exists
+          ansible.builtin.stat:
+            path: /tmp/deploy-info.json
+          register: deploy_file
+
+        - name: Show deployment status
+          ansible.builtin.debug:
+            msg: "Deployment file exists: {{ deploy_file.stat.exists }}"

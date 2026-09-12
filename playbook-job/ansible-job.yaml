@@ -1,0 +1,63 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ansible-job
+  labels:
+    app: ansible-runner
+    pattern: one-shot-job
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: ansible-runner
+        pattern: one-shot-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ansible
+          image: alpine/ansible:latest
+          workingDir: /playbooks
+          command: ["ansible-playbook"]
+          args:
+            - site.yml
+            - -i
+            - /inventory/hosts
+            - -v
+          env:
+            - name: ANSIBLE_CONFIG
+              value: /etc/ansible/ansible.cfg
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+          volumeMounts:
+            - name: playbooks
+              mountPath: /playbooks
+            - name: playbook-vars
+              mountPath: /playbooks/vars
+            - name: inventory
+              mountPath: /inventory
+            - name: ansible-config
+              mountPath: /etc/ansible/ansible.cfg
+              subPath: ansible.cfg
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: playbooks
+          configMap:
+            name: ansible-playbooks
+        - name: playbook-vars
+          configMap:
+            name: ansible-playbook-vars
+        - name: inventory
+          configMap:
+            name: ansible-inventory
+        - name: ansible-config
+          configMap:
+            name: ansible-config

@@ -1,0 +1,65 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ansible-runner
+  labels:
+    app: ansible-runner
+    pattern: long-running-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ansible-runner
+      pattern: long-running-runner
+  template:
+    metadata:
+      labels:
+        app: ansible-runner
+        pattern: long-running-runner
+    spec:
+      containers:
+        - name: ansible
+          image: alpine/ansible:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Ansible runner is ready"
+              echo "Exec into this pod and run: ansible-playbook site.yml -i /inventory/hosts -v"
+              sleep infinity
+          workingDir: /playbooks
+          env:
+            - name: ANSIBLE_CONFIG
+              value: /etc/ansible/ansible.cfg
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+          volumeMounts:
+            - name: playbooks
+              mountPath: /playbooks
+            - name: playbook-vars
+              mountPath: /playbooks/vars
+            - name: inventory
+              mountPath: /inventory
+            - name: ansible-config
+              mountPath: /etc/ansible/ansible.cfg
+              subPath: ansible.cfg
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: playbooks
+          configMap:
+            name: ansible-playbooks
+        - name: playbook-vars
+          configMap:
+            name: ansible-playbook-vars
+        - name: inventory
+          configMap:
+            name: ansible-inventory
+        - name: ansible-config
+          configMap:
+            name: ansible-config
